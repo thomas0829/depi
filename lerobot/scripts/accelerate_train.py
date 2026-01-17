@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 import time
 from contextlib import nullcontext
 from datetime import timedelta
@@ -214,8 +215,30 @@ def train(cfg: TrainPipelineConfig):
     # create policy
     logging.info("Creating policy")
     accelerator.wait_for_everyone()
+    
+    # Load from pretrained model if specified via environment variable
+    pretrained_model_path = os.environ.get("PRETRAINED_MODEL_PATH")
+    if pretrained_model_path:
+        logging.info(f"Loading pretrained model from: {pretrained_model_path}")
+        cfg.policy.pretrained_path = pretrained_model_path
+    
     # when use accelerate, we compile the policy through accelerate config
-    policy = make_policy(cfg=cfg.policy, ds_meta=dataset.meta, compile=False, strict=cfg.strict)
+    policy = make_policy(cfg=cfg.policy, ds_meta=dataset.meta, strict=cfg.strict, rename_map=cfg.rename_map)
+    
+    # Enable gradient checkpointing if configured in policy config
+    if hasattr(cfg.policy, 'gradient_checkpointing') and cfg.policy.gradient_checkpointing:
+        if hasattr(policy, 'enable_gradient_checkpointing'):
+            logging.info("Enabling gradient checkpointing for policy")
+            policy.enable_gradient_checkpointing()
+        elif hasattr(policy.model, 'enable_gradient_checkpointing'):
+            logging.info("Enabling gradient checkpointing for policy.model")
+            policy.model.enable_gradient_checkpointing()
+        elif hasattr(policy.model, 'gradient_checkpointing_enable'):
+            logging.info("Enabling gradient checkpointing for policy.model (transformers style)")
+            policy.model.gradient_checkpointing_enable()
+        else:
+            logging.warning("Gradient checkpointing requested but not supported by this policy")
+    
     accelerator.wait_for_everyone()
     logging.info("Creating optimizer and scheduler")
     # https://huggingface.co/docs/accelerate/concept_guides/performance

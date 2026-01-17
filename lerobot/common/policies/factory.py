@@ -26,12 +26,13 @@ from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.common.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType
+from lerobot.configs.types import FeatureType, PolicyFeature
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -60,6 +61,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
 
         return PI0FASTPolicy
+    elif name == "pi05":
+        from lerobot.common.policies.pi05.modeling_pi05 import PI05Policy
+
+        return PI05Policy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -77,6 +82,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi0fast":
         return PI0FASTConfig(**kwargs)
+    elif policy_type == "pi05":
+        return PI05Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -88,6 +95,7 @@ def make_policy(
     compile: bool = False,
     strict: bool = True,
     device: torch.device | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> PreTrainedPolicy:
     """Make an instance of a policy class.
 
@@ -140,9 +148,37 @@ def make_policy(
             )
         features = env_to_policy_features(env_cfg)
 
+    # Apply rename_map to features if provided
+    if rename_map:
+        renamed_features = {}
+        for key, ft in features.items():
+            new_key = rename_map.get(key, key)
+            renamed_features[new_key] = ft
+        features = renamed_features
+    
+    # For PI05, adjust image feature shapes to match policy's image_resolution
+    from lerobot.common.policies.pi05.configuration_pi05 import PI05Config
+    if isinstance(cfg, PI05Config) and hasattr(cfg, 'image_resolution'):
+        adjusted_features = {}
+        for key, ft in features.items():
+            if ft.type == FeatureType.VISUAL:
+                # Update shape to use policy's configured image_resolution
+                adjusted_ft = PolicyFeature(
+                    type=ft.type,
+                    shape=(3, *cfg.image_resolution),
+                )
+                adjusted_features[key] = adjusted_ft
+            else:
+                adjusted_features[key] = ft
+        features = adjusted_features
+
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
+    
+    # Add rename_map to kwargs for PI05 policy
+    if rename_map and cfg.type == "pi05":
+        kwargs["rename_map"] = rename_map
 
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
