@@ -184,3 +184,4 @@ so100_data/annotate.sh
 external/
 tmp*
 tmp_upstream/*
+AGENTS.md

@@ -332,6 +332,33 @@ class PI0Policy(PreTrainedPolicy):
         losses = losses[:, :, : self.config.max_action_dim]
         loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
+        # Apply advantage weighting if available
+        if "advantage" in batch:
+            advantages = batch["advantage"]  # shape: (batch_size,)
+
+            # Log raw advantage statistics before clipping
+            loss_dict["mean_advantage_raw"] = advantages.mean().item()
+            loss_dict["pos_advantage_frac"] = (advantages > 0).float().mean().item()
+
+            # Clip negative advantages to a conservative minimum
+            # This prevents gradient reversal while still downweighting bad actions
+            adv_clip_min = getattr(self.config, "advantage_clip_min", -0.5)
+            advantages_clipped = advantages.clamp(min=adv_clip_min)
+
+            # Convert TD-style advantages to multiplicative weights by adding 1.0
+            # advantage = 0 -> weight = 1 (neutral, no change)
+            # advantage > 0 -> weight > 1 (upweight good actions)
+            # advantage < 0 -> weight < 1 (downweight bad actions, but > 0 due to clipping)
+            weights = 1.0 + advantages_clipped
+
+            # Expand to match loss shape (batch_size, n_action_steps, action_dim)
+            weights = weights[:, None, None].expand_as(losses)
+            losses = losses * weights
+
+            loss_dict["mean_advantage_clipped"] = advantages_clipped.mean().item()
+            loss_dict["mean_weight"] = weights.mean().item()
+            loss_dict["losses_after_advantage"] = losses.clone().mean().item()
+
         # For backward pass
         loss = losses.mean()
         # For logging

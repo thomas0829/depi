@@ -941,6 +941,7 @@ class LeRobotDatasetV3(DatasetCommonMixin, torch.utils.data.Dataset):
         else:
             task_idx = item["task_index"].item()
             item["task"] = self.meta.tasks.iloc[task_idx].name
+
         return item
 
     def __repr__(self):
