@@ -324,52 +324,52 @@ def annotate_dataset(
 
     for ep_idx in range(num_episodes):
         logger.info(f"Annotating episode {ep_idx + 1}/{num_episodes}")
-        try:
-            # Extract frames
-            frames, instruction, sampled_indices, ep_total_frames = extract_frames_from_episode(
-                dataset, ep_idx, sample_interval
+        # try:
+        # Extract frames
+        frames, instruction, sampled_indices, ep_total_frames = extract_frames_from_episode(
+            dataset, ep_idx, sample_interval
+        )
+
+        if len(frames) < 2:
+            logger.warning(f"Episode {ep_idx} has fewer than 2 frames, using zero advantages")
+            ep_advantages = np.zeros(ep_total_frames, dtype=np.float32)
+        else:
+            logger.info(
+                f"Episode {ep_idx}: {ep_total_frames} frames, instruction: '{instruction[:50]}...'"
             )
 
-            if len(frames) < 2:
-                logger.warning(f"Episode {ep_idx} has fewer than 2 frames, using zero advantages")
-                ep_advantages = np.zeros(ep_total_frames, dtype=np.float32)
-            else:
-                logger.info(
-                    f"Episode {ep_idx}: {ep_total_frames} frames, instruction: '{instruction[:50]}...'"
-                )
-
-                # Get episode start index
-                if is_v3:
-                    start_idx = dataset.meta.episodes[ep_idx].get("dataset_from_index", 0)
-                else:
-                    start_idx = dataset.episode_data_index["from"].get(ep_idx, 0)
-
-                # Compute advantages
-                ep_advantages = compute_advantages_for_episode(
-                    client,
-                    frames,
-                    instruction,
-                    ep_total_frames,
-                    sampled_indices,
-                    start_idx,
-                    fps=fps,
-                    reduction=reduction,
-                    reward_stride=reward_stride,
-                )
-
-            all_advantages.append(ep_advantages)
-
-        except Exception as e:
-            logger.error(f"Error annotating episode {ep_idx}: {e}")
-            # Get episode length and use zeros
+            # Get episode start index
             if is_v3:
-                ep_length = dataset.meta.episodes[ep_idx].get("length", 0)
+                start_idx = dataset.meta.episodes[ep_idx].get("dataset_from_index", 0)
             else:
                 start_idx = dataset.episode_data_index["from"].get(ep_idx, 0)
-                end_idx = dataset.episode_data_index["to"].get(ep_idx, start_idx)
-                ep_length = end_idx - start_idx
-            all_advantages.append(np.zeros(ep_length, dtype=np.float32))
-            continue
+
+            # Compute advantages
+            ep_advantages = compute_advantages_for_episode(
+                client,
+                frames,
+                instruction,
+                ep_total_frames,
+                sampled_indices,
+                start_idx,
+                fps=fps,
+                reduction=reduction,
+                reward_stride=reward_stride,
+            )
+
+        all_advantages.append(ep_advantages)
+
+        # except Exception as e:
+        #     logger.error(f"Error annotating episode {ep_idx}: {e}")
+        #     # Get episode length and use zeros
+        #     if is_v3:
+        #         ep_length = dataset.meta.episodes[ep_idx].get("length", 0)
+        #     else:
+        #         start_idx = dataset.episode_data_index["from"].get(ep_idx, 0)
+        #         end_idx = dataset.episode_data_index["to"].get(ep_idx, start_idx)
+        #         ep_length = end_idx - start_idx
+        #     all_advantages.append(np.zeros(ep_length, dtype=np.float32))
+        #     continue
 
     # Concatenate all advantages into a single array
     advantages_array = np.concatenate(all_advantages)
