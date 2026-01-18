@@ -135,14 +135,10 @@ def extract_frames_from_episode(dataset, episode_index: int, sample_interval: in
     if camera_key is None:
         raise ValueError(f"No camera key found in dataset item: {list(sample_item.keys())}")
 
-    # Use version-appropriate batch access
-    if isinstance(dataset, LeRobotDatasetV3):
-        # V3: Column-first indexing (faster)
-        frames_data = dataset.hf_dataset[camera_key][sampled_indices]
-    else:
-        # V2.1: Use .select() method
-        items_batch = dataset.hf_dataset.select(sampled_indices)
-        frames_data = [item[camera_key] for item in items_batch]
+    # V3: Column-first indexing (batch access is faster than per-item access)
+    if not isinstance(dataset, LeRobotDatasetV3):
+        raise ValueError("This script requires V3 datasets. Use modify_features which is V3-only.")
+    frames_data = dataset.hf_dataset[camera_key][sampled_indices]
 
     # Process all frames
     frames = []
