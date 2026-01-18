@@ -16,13 +16,14 @@ Usage:
 """
 
 import argparse
-import logging
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
 from loguru import logger
+from tqdm import tqdm
+
 from opengvl.utils.logging_config import setup_logging
+
 
 def parse_args():
     # Configure logging format
@@ -123,29 +124,33 @@ def extract_frames_from_episode(dataset, episode_index: int, sample_interval: in
         raise ValueError("Cannot determine episode boundaries")
 
     total_frames = end_idx - start_idx
-    frames = []
-    # Sample frames at intervals for VLM evaluation
     sampled_indices = list(range(start_idx, end_idx, sample_interval))
 
-    for idx in sampled_indices:
-        item = dataset[idx]
-        # Get the first available camera key
-        camera_key = None
-        for key in item:
-            if key.startswith("observation.images"):
-                camera_key = key
-                break
+    # Import for version check
+    from lerobot.common.datasets.lerobot_dataset_v3 import LeRobotDatasetV3
 
-        if camera_key is None:
-            raise ValueError(f"No camera key found in dataset item: {list(item.keys())}")
+    # Find camera key from first item
+    sample_item = dataset[sampled_indices[0]]
+    camera_key = next((k for k in sample_item if k.startswith("observation.images")), None)
+    if camera_key is None:
+        raise ValueError(f"No camera key found in dataset item: {list(sample_item.keys())}")
 
-        # Convert to numpy array (C, H, W) -> (H, W, C)
-        frame = item[camera_key]
+    # Use version-appropriate batch access
+    if isinstance(dataset, LeRobotDatasetV3):
+        # V3: Column-first indexing (faster)
+        frames_data = dataset.hf_dataset[camera_key][sampled_indices]
+    else:
+        # V2.1: Use .select() method
+        items_batch = dataset.hf_dataset.select(sampled_indices)
+        frames_data = [item[camera_key] for item in items_batch]
+
+    # Process all frames
+    frames = []
+    for frame in frames_data:
         if hasattr(frame, "numpy"):
             frame = frame.numpy()
         if frame.shape[0] in [1, 3]:  # Channels first
             frame = np.transpose(frame, (1, 2, 0))
-        # Convert from [0, 1] to [0, 255] if needed
         if frame.max() <= 1.0:
             frame = (frame * 255).astype(np.uint8)
         frames.append(frame)
@@ -318,10 +323,9 @@ def annotate_dataset(
     all_advantages = []
 
     for ep_idx in range(num_episodes):
-        logger.info(f"Annotating episode {ep_idx+1}/{num_episodes}")
+        logger.info(f"Annotating episode {ep_idx + 1}/{num_episodes}")
         try:
             # Extract frames
-            breakpoint()
             frames, instruction, sampled_indices, ep_total_frames = extract_frames_from_episode(
                 dataset, ep_idx, sample_interval
             )
