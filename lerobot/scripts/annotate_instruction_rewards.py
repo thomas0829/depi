@@ -93,32 +93,32 @@ def parse_args():
         help="Compute instruction rewards every N sampled frames (default: 1 = every frame).",
     )
     parser.add_argument(
-        "--input_root",
-        type=str,
-        default=None,
-        help="Root directory for input dataset (default: HF cache)",
-    )
-    parser.add_argument(
         "--push_to_hub",
         action="store_true",
-        help="Upload the annotated dataset to the Hugging Face Hub after creation.",
+        help="Upload the annotated dataset to the Hugging Face Hub using dataset.push_to_hub().",
     )
     parser.add_argument(
-        "--hf_repo_id",
+        "--hub_branch",
         type=str,
         default=None,
-        help="Target HF dataset repo id for upload (defaults to output_repo_id).",
+        help="Optional branch name when pushing to hub.",
     )
     parser.add_argument(
-        "--hf_token",
-        type=str,
-        default=None,
-        help="Hugging Face token for uploading (defaults to cached token).",
-    )
-    parser.add_argument(
-        "--private",
+        "--hub_private",
         action="store_true",
-        help="Create the target Hub dataset as private.",
+        help="Create the hub dataset as private (defaults to public).",
+    )
+    parser.add_argument(
+        "--no_hub_push_videos",
+        dest="hub_push_videos",
+        action="store_false",
+        help="Do not upload videos when pushing to hub (default: upload videos).",
+    )
+    parser.add_argument(
+        "--input_root",
+        type=str,
+        default="./datasets/",
+        help="Root directory for input dataset",
     )
     return parser.parse_args()
 
@@ -307,9 +307,9 @@ def annotate_dataset(
     reward_stride: int = 50,
     input_root: str | None = None,
     push_to_hub: bool = False,
-    hf_repo_id: str | None = None,
-    hf_token: str | None = None,
-    private: bool = False,
+    hub_branch: str | None = None,
+    hub_private: bool = False,
+    hub_push_videos: bool = True,
 ):
     """Annotate a LeRobot dataset with instruction rewards stored in parquet."""
 
@@ -419,22 +419,16 @@ def annotate_dataset(
         logger.warning("'advantage' not found in sample!")
 
     if push_to_hub:
-        target_repo = hf_repo_id if hf_repo_id is not None else output_repo_id
         try:
-            from huggingface_hub import HfApi
-
-            api = HfApi(token=hf_token)
-            api.create_repo(repo_id=target_repo, repo_type="dataset", private=private, exist_ok=True)
-            api.upload_folder(
-                repo_id=target_repo,
-                repo_type="dataset",
-                folder_path=str(new_dataset.root),
-                token=hf_token,
-                commit_message="Add advantage annotations",
+            new_dataset.push_to_hub(
+                branch=hub_branch,
+                private=hub_private,
+                push_videos=hub_push_videos,
+                tag_version=False,
             )
-            logger.info(f"Uploaded dataset to hub: {target_repo}")
+            logger.info(f"Pushed dataset to hub: {new_dataset.repo_id} (branch={hub_branch})")
         except Exception as e:
-            logger.error(f"Failed to upload dataset to hub ({target_repo}): {e}")
+            logger.error(f"Failed to push dataset to hub: {e}")
 
     return new_dataset
 
@@ -469,9 +463,9 @@ def main():
             reward_stride=args.reward_stride,
             input_root=args.input_root,
             push_to_hub=args.push_to_hub,
-            hf_repo_id=args.hf_repo_id,
-            hf_token=args.hf_token,
-            private=args.private,
+            hub_branch=args.hub_branch,
+            hub_private=args.hub_private,
+            hub_push_videos=args.hub_push_videos,
         )
     except Exception as e:
         logger.error(f"Failed to annotate {args.input_repo_id}: {e}")
