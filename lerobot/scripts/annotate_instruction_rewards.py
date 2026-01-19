@@ -12,7 +12,9 @@ Usage:
         --input_repo_id thomas0829/eval_put_the_doll_into_the_box \
         --output_dir ./datasets/ \
         --output_repo_id put_the_doll_into_the_box_adv \
-        --model_name Qwen/Qwen3-VL-8B-Instruct
+        --model_name Qwen/Qwen3-VL-8B-Instruct \
+        --push_to_hub \
+        --output_repo_id sengi/put_the_doll_into_the_box_adv
 """
 
 import argparse
