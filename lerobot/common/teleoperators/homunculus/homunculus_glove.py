@@ -21,9 +21,9 @@ from pprint import pformat
 
 import serial
 
-from lerobot.motors import MotorCalibration
-from lerobot.motors.motors_bus import MotorNormMode
-from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
+from lerobot.common.motors import MotorCalibration
+from lerobot.common.motors.motors_bus import MotorNormMode
+from lerobot.common.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
 from lerobot.common.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 
@@ -336,7 +336,7 @@ class HomunculusGlove(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.stop_event.set()
         self.thread.join(timeout=1)
