@@ -10,11 +10,10 @@ during training without any additional loading mechanism.
 Usage:
     python lerobot/scripts/annotate_instruction_rewards.py \
         --input_repo_id thomas0829/eval_put_the_doll_into_the_box \
-        --output_dir ./datasets/ \
+        --output_dir ./datasets_out/ \
         --output_repo_id put_the_doll_into_the_box_adv \
         --model_name Qwen/Qwen3-VL-8B-Instruct \
-        --push_to_hub \
-        --output_repo_id sengi/put_the_doll_into_the_box_adv
+        --push_to_hub
 """
 
 import argparse
@@ -95,6 +94,11 @@ def parse_args():
         help="Compute instruction rewards every N sampled frames (default: 1 = every frame).",
     )
     parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Skip reward computation; use constant advantages (20.0) but still write outputs.",
+    )
+    parser.add_argument(
         "--push_to_hub",
         action="store_true",
         help="Upload the annotated dataset to the Hugging Face Hub using dataset.push_to_hub().",
@@ -119,8 +123,8 @@ def parse_args():
     parser.add_argument(
         "--input_root",
         type=str,
-        default="./datasets/",
-        help="Root directory for input dataset",
+        default=None,
+        help="Root directory for input dataset (default: HF cache)",
     )
     return parser.parse_args()
 
@@ -312,6 +316,7 @@ def annotate_dataset(
     hub_branch: str | None = None,
     hub_private: bool = False,
     hub_push_videos: bool = True,
+    dry_run: bool = False,
 ):
     """Annotate a LeRobot dataset with instruction rewards stored in parquet."""
 
@@ -334,9 +339,12 @@ def annotate_dataset(
     total_frames = dataset.meta.total_frames if hasattr(dataset.meta, "total_frames") else len(dataset)
     logger.info(f"Dataset loaded: {num_episodes} episodes, {total_frames} frames to annotate")
 
-    # Initialize VLM client
-    logger.info(f"Loading VLM: {model_name}")
-    client = QwenClient(model_name=model_name)
+    if not dry_run:
+        # Initialize VLM client
+        logger.info(f"Loading VLM: {model_name}")
+        client = QwenClient(model_name=model_name)
+    else:
+        client = None
 
     # Compute advantages for all episodes
     all_advantages = []
@@ -350,9 +358,14 @@ def annotate_dataset(
         )
         fps_used = ep_fps if ep_fps is not None else fps
 
-        if len(frames) < 2:
-            logger.warning(f"Episode {ep_idx} has fewer than 2 frames, using zero advantages")
-            ep_advantages = np.zeros(ep_total_frames, dtype=np.float32)
+        if dry_run:
+            logger.warning(f"Episode {ep_idx} dry-run or fewer than 2 frames; skipping reward computation.")
+            ep_advantages = (
+                np.full(ep_total_frames, 20.0, dtype=np.float32)
+                if dry_run
+                else np.zeros(ep_total_frames, dtype=np.float32)
+            )
+            voc_score = float("nan")
         else:
             logger.info(f"Episode {ep_idx}: {ep_total_frames} frames, instruction: '{instruction[:50]}...'")
 
@@ -375,16 +388,16 @@ def annotate_dataset(
                 reward_stride=reward_stride,
             )
 
-            # Log advantage statistics for visibility
-            logger.info(
-                "Episode {} advantage stats — min: {:.4f}, max: {:.4f}, mean: {:.4f}, voc: {:.4f}".format(
-                    ep_idx,
-                    float(ep_advantages.min()),
-                    float(ep_advantages.max()),
-                    float(ep_advantages.mean()),
-                    float(voc_score),
-                )
+        # Log advantage statistics for visibility
+        logger.info(
+            "Episode {} advantage stats — min: {:.4f}, max: {:.4f}, mean: {:.4f}, voc: {:.4f}".format(
+                ep_idx,
+                float(ep_advantages.min()),
+                float(ep_advantages.max()),
+                float(ep_advantages.mean()),
+                float(voc_score),
             )
+        )
 
         all_advantages.append(ep_advantages)
 
@@ -396,11 +409,22 @@ def annotate_dataset(
         f"min={advantages_array.min():.4f}, max={advantages_array.max():.4f}"
     )
 
+    if dry_run and push_to_hub:
+        logger.info("Dry run enabled: proceeding with hub upload.")
+
     # Use modify_features to add the advantage column
     logger.info(f"Creating new dataset with advantage column at {output_dir / output_repo_id}")
 
     # Select appropriate modify_features based on dataset version
     modify_features = modify_features_v3 if is_v3 else modify_features_v21
+
+    target_root = (output_dir / output_repo_id).resolve()
+    source_root = Path(dataset.root).resolve()
+    if target_root == source_root:
+        raise ValueError(
+            f"Output path {target_root} matches input dataset root. "
+            "Use a different --output_dir or --output_repo_id to avoid overwriting."
+        )
 
     new_dataset = modify_features(
         dataset=dataset,
@@ -452,6 +476,21 @@ def main():
     logger.info(f"Processing dataset: {args.input_repo_id}")
     logger.info(f"Output: {output_dir / output_repo_id}")
 
+    # Early guard: avoid writing into the same directory as the source dataset.
+    from lerobot.common.constants import HF_LEROBOT_HOME
+
+    output_path = (output_dir / output_repo_id).resolve()
+    candidate_roots = []
+    if args.input_root is not None:
+        candidate_roots.append((Path(args.input_root) / args.input_repo_id).resolve())
+        candidate_roots.append(Path(args.input_root).resolve())
+    candidate_roots.append((HF_LEROBOT_HOME / args.input_repo_id).resolve())
+    if not args.dry_run and output_path in candidate_roots:
+        raise ValueError(
+            f"Output path {output_path} matches an input dataset root. "
+            "Choose a different --output_dir or --output_repo_id."
+        )
+
     try:
         annotate_dataset(
             input_repo_id=args.input_repo_id,
@@ -468,6 +507,7 @@ def main():
             hub_branch=args.hub_branch,
             hub_private=args.hub_private,
             hub_push_videos=args.hub_push_videos,
+            dry_run=args.dry_run,
         )
     except Exception as e:
         logger.error(f"Failed to annotate {args.input_repo_id}: {e}")
