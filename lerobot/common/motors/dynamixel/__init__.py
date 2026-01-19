@@ -15,4 +15,12 @@
 # limitations under the License.
 
 from .dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode, TorqueMode
-from .tables import *
+from . import tables as tables
+
+__all__ = [
+    "DriveMode",
+    "DynamixelMotorsBus",
+    "OperatingMode",
+    "TorqueMode",
+    "tables",
+]
