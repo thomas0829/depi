@@ -13,6 +13,7 @@ from opengvl.metrics.instruction_reward import InstructionRewardResult
 from opengvl.utils.aliases import Event, ImageEvent, ImageNumpy, ImageT, TextEvent
 from opengvl.utils.constants import MAX_TOKENS_TO_GENERATE
 from opengvl.utils.images import to_pil
+from transformers.video_utils import VideoMetadata
 
 
 class QwenClient(BaseModelClient):
@@ -25,7 +26,7 @@ class QwenClient(BaseModelClient):
         super().__init__(rpm=rpm)
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_name,
-            torch_dtype="auto",
+            torch_dtype="bfloat16",
             device_map="auto",
             attn_implementation="flash_attention_2",
         )
@@ -224,7 +225,7 @@ class QwenClient(BaseModelClient):
             )
 
         content = [
-            {"type": "video", "video": pil_frames, "fps": fps},
+            {"type": "video", "video": pil_frames},
             {"type": "text", "text": prompt_text},
         ]
         user_messages = [{"role": "user", "content": content}]
@@ -264,14 +265,20 @@ class QwenClient(BaseModelClient):
             if eos_token is not None:
                 prompt_chat = prompt_chat.split(eos_token)[0]
             full_text = f"{prompt_chat}{instruction_suffix}"
-            image_inputs, video_inputs = process_vision_info(user_messages)
+            image_inputs, video_inputs = process_vision_info(user_messages, return_video_metadata=True)
 
+        video_input = video_inputs[0][0]
+        video_metadata = video_inputs[0][1]
+        video_metadata["fps"] = fps
+        video_metadata["total_num_frames"] = int(video_metadata["total_num_frames"])
+        video_kwargs = {"video_metadata": video_metadata, "do_sample_frames": True, 'fps': fps} # decrease fps to subsample video.
         inputs = self.processor(
             text=[full_text],
             images=image_inputs,
-            videos=video_inputs,
+            videos=video_input,
             padding=True,
             return_tensors="pt",
+            videos_kwargs=video_kwargs,
         )
 
         inputs = inputs.to("cuda")

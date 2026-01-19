@@ -223,20 +223,17 @@ def compute_advantages_for_episode(
     for t in tqdm(prefix_lengths, desc="Computing chunk rewards"):
         logger.info(f"Computing reward for prefix length {t}")
         prefix_frames = frames[:t]
-        try:
-            result = client.compute_instruction_reward(
-                frames=prefix_frames,
-                instruction=instruction,
-                reduction=reduction,
-                fps=fps,
-                use_video_description=False,
-                add_chat_template=False,
-            )
-            prefix_rewards.append(result.reward)
-        except Exception as e:
-            logger.warning(f"Error computing reward for prefix length {t}: {e}")
-            # Use the previous reward as fallback
-            prefix_rewards.append(prefix_rewards[-1] if prefix_rewards else 0.0)
+
+        result = client.compute_instruction_reward(
+            frames=prefix_frames,
+            instruction=instruction,
+            reduction=reduction,
+            fps=fps,
+            use_video_description=False,
+            add_chat_template=False,
+        )
+        prefix_rewards.append(result.reward)
+        logger.info(f"Prefix length {t}: reward = {result.reward:.4f}")
 
     if not prefix_rewards:
         return np.zeros(total_frames, dtype=np.float32), float("nan")
@@ -352,27 +349,16 @@ def annotate_dataset(
 
             # Log advantage statistics for visibility
             logger.info(
-                "Episode %d advantage stats — min: %.4f, max: %.4f, mean: %.4f, voc: %.4f",
-                ep_idx,
-                float(ep_advantages.min(initial=0.0)),
-                float(ep_advantages.max(initial=0.0)),
-                float(ep_advantages.mean(initial=0.0)),
-                float(voc_score),
+                "Episode {} advantage stats — min: {:.4f}, max: {:.4f}, mean: {:.4f}, voc: {:.4f}".format(
+                    ep_idx,
+                    float(ep_advantages.min()),
+                    float(ep_advantages.max()),
+                    float(ep_advantages.mean()),
+                    float(voc_score),
+                )
             )
 
         all_advantages.append(ep_advantages)
-
-        # except Exception as e:
-        #     logger.error(f"Error annotating episode {ep_idx}: {e}")
-        #     # Get episode length and use zeros
-        #     if is_v3:
-        #         ep_length = dataset.meta.episodes[ep_idx].get("length", 0)
-        #     else:
-        #         start_idx = dataset.episode_data_index["from"].get(ep_idx, 0)
-        #         end_idx = dataset.episode_data_index["to"].get(ep_idx, start_idx)
-        #         ep_length = end_idx - start_idx
-        #     all_advantages.append(np.zeros(ep_length, dtype=np.float32))
-        #     continue
 
     # Concatenate all advantages into a single array
     advantages_array = np.concatenate(all_advantages)
