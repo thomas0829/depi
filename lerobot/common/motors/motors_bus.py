@@ -516,7 +516,7 @@ class MotorsBus(abc.ABC):
             self._connect(handshake=False)
 
         if initial_baudrate is None:
-            initial_baudrate, initial_id = self._find_single_motor(motor)
+            initial_baudrate, initial_id = self._find_single_motor(motor, None)
 
         if initial_id is None:
             _, initial_id = self._find_single_motor(motor, initial_baudrate)
