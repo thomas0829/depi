@@ -342,20 +342,20 @@ class PI0Policy(PreTrainedPolicy):
 
             # Clip negative advantages to a conservative minimum
             # This prevents gradient reversal while still downweighting bad actions
-            adv_clip_min = getattr(self.config, "advantage_clip_min", -0.5)
+            adv_clip_min = getattr(self.config, "advantage_clip_min", -0.1)
             advantages_clipped = advantages.clamp(min=adv_clip_min)
+            advantages_clipped[advantages_clipped > 0.1] = 1.0
 
             # Convert TD-style advantages to multiplicative weights by adding 1.0
             # advantage = 0 -> weight = 1 (neutral, no change)
             # advantage > 0 -> weight > 1 (upweight good actions)
             # advantage < 0 -> weight < 1 (downweight bad actions, but > 0 due to clipping)
-            weights = 1.0 + advantages_clipped
+            weights = advantages_clipped
 
             # Expand to match loss shape (batch_size, n_action_steps, action_dim)
             weights = weights[:, None, None].expand_as(losses)
             losses = losses * weights
 
-            loss_dict["mean_advantage_clipped"] = advantages_clipped.mean().item()
             loss_dict["mean_weight"] = weights.mean().item()
             loss_dict["losses_after_advantage"] = losses.clone().mean().item()
 

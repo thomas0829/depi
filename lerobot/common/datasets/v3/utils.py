@@ -627,7 +627,6 @@ def create_lerobot_dataset_card(
             }
         ],
     )
-
     pkg_root = __package__.rsplit(".", 1)[0]
     card_template = (importlib.resources.files(pkg_root) / "card_template.md").read_text()
 

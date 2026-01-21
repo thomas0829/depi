@@ -312,6 +312,11 @@ def train(cfg: TrainPipelineConfig):
     # Track actual optimization steps (not batch steps)
     init_step = step  # Initialize from resume step if resuming
     current_opt_step = init_step
+    
+    # For eval purposes
+    total_loss = 0.0
+    loss_count = 0
+    
     for epoch in range(cfg.num_epochs):
         if current_opt_step > cfg.steps:
             break
@@ -378,6 +383,8 @@ def train(cfg: TrainPipelineConfig):
                     if output_dict:
                         wandb_log_dict.update(output_dict)
                     wandb_logger.log_dict(wandb_log_dict, global_opt_step)
+                total_loss += train_tracker.metrics['loss'].avg
+                loss_count += 1
                 train_tracker.reset_averages()
 
             if cfg.save_checkpoint and is_saving_step and accelerator.is_main_process:
@@ -451,8 +458,10 @@ def train(cfg: TrainPipelineConfig):
                 accelerator.wait_for_everyone()
 
             end_time = time.perf_counter()
-            logging.info(f"Time taken for batch {batch_idx}: {end_time - start_time:.2f} seconds")
+            # logging.info(f"Time taken for batch {batch_idx}: {end_time - start_time:.2f} seconds")
 
+    avg_loss = total_loss / loss_count if loss_count > 0 else 0.0
+    logging.info(colored(f"Training completed. Average Loss: {avg_loss:.4f}", "green", attrs=["bold"]))
     policy.model = accelerator.unwrap_model(policy.model)
     policy.save_pretrained(Path(cfg.output_dir) / "pretrained_model")
     if eval_env is not None and accelerator.is_main_process:

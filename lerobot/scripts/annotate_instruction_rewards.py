@@ -9,9 +9,9 @@ during training without any additional loading mechanism.
 
 Usage:
     python lerobot/scripts/annotate_instruction_rewards.py \
-        --input_repo_id thomas0829/eval_put_the_doll_into_the_box_2 \
+        --input_repo_id thomas0829/eval_put_the_doll_into_the_box_adv1 \
         --output_dir ./datasets_out/ \
-        --output_repo_id sengi/put_the_doll_into_the_box_2_adv \
+        --output_repo_id sengi/put_the_doll_into_the_box_adv1 \
         --model_name Qwen/Qwen3-VL-8B-Instruct \
         --push_to_hub \
         --reward_stride 50 \
@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+from hmac import new
 from pathlib import Path
 from sys import prefix
 
@@ -28,7 +29,7 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.lerobot_dataset_v3 import LeRobotDatasetV3
-from lerobot.common.datasets.v3.dataset_tools import modify_features as modify_features_v3
+from lerobot.common.datasets.v3.dataset_tools import add_features, modify_features as modify_features_v3
 from lerobot.common.datasets.v21.dataset_tools import modify_features as modify_features_v21
 from opengvl.clients.qwen import QwenClient
 from opengvl.utils.logging_config import setup_logging
@@ -108,10 +109,10 @@ def parse_args():
         help="Upload the annotated dataset to the Hugging Face Hub using dataset.push_to_hub().",
     )
     parser.add_argument(
-        "--hub_branch",
+        "--revision",
         type=str,
         default=None,
-        help="Optional branch name when pushing to hub.",
+        help="Optional revision name when pushing to hub.",
     )
     parser.add_argument(
         "--hub_private",
@@ -123,6 +124,11 @@ def parse_args():
         type=str,
         default=None,
         help="Root directory for input dataset (default: HF cache)",
+    )
+    parser.add_argument(
+        "--force_cache_sync",
+        action="store_true",
+        help="Force re-syncing the dataset cache from the hub.",
     )
     return parser.parse_args()
 
@@ -305,8 +311,9 @@ def annotate_dataset(
     reward_stride: int = 50,
     input_root: str | None = None,
     push_to_hub: bool = False,
-    hub_branch: str | None = None,
+    revision: str | None = None,
     hub_private: bool = False,
+    force_cache_sync: bool = False,
     dry_run: bool = False,
 ):
     """Annotate a LeRobot dataset with instruction rewards stored in parquet."""
@@ -314,11 +321,11 @@ def annotate_dataset(
     # Load dataset
     logger.info(f"Loading dataset: {input_repo_id}")
     try:
-        dataset = LeRobotDatasetV3(input_repo_id, root=input_root)
+        dataset = LeRobotDatasetV3(input_repo_id, root=input_root, force_cache_sync=force_cache_sync, revision=revision)
         is_v3 = True
     except Exception:
         logger.info("V3 loader failed, trying V2.1 loader...")
-        dataset = LeRobotDataset(input_repo_id, root=input_root)
+        dataset = LeRobotDataset(input_repo_id, root=input_root, force_cache_sync=force_cache_sync, revision=revision)
         is_v3 = False
     num_episodes = (
         dataset.meta.total_episodes if hasattr(dataset.meta, "total_episodes") else dataset.num_episodes
@@ -410,7 +417,7 @@ def annotate_dataset(
     # Select appropriate modify_features based on dataset version
     modify_features = modify_features_v3 if is_v3 else modify_features_v21
 
-    target_root = (output_dir / output_repo_id).resolve()
+    target_root = (output_dir).resolve()
     source_root = Path(dataset.root).resolve()
     if target_root == source_root:
         raise ValueError(
@@ -420,12 +427,14 @@ def annotate_dataset(
 
     if Path(output_dir).resolve().exists():
         output_dir = Path(str(output_dir) + f"_{int(time.time())}")
+    add_features = {"advantage": (advantages_array, {"dtype": "float32", "shape": (1,), "names": None})}
     new_dataset = modify_features(
         dataset=dataset,
-        add_features={"advantage": (advantages_array, {"dtype": "float32", "shape": (1,), "names": None})},
+        add_features=add_features,
         output_dir=output_dir,
         repo_id=output_repo_id,
     )
+    # new_dataset = dataset
 
     logger.info(f"Dataset created: {new_dataset.repo_id}")
     logger.info(f"Features: {list(new_dataset.meta.features.keys())}")
@@ -439,16 +448,12 @@ def annotate_dataset(
         logger.warning("'advantage' not found in sample!")
 
     if push_to_hub:
-        try:
-            new_dataset.push_to_hub(
-                branch=hub_branch,
-                private=hub_private,
-                push_videos=True,
-                tag_version=True,
-            )
-            logger.info(f"Pushed dataset to hub: {new_dataset.repo_id} (branch={hub_branch})")
-        except Exception as e:
-            logger.error(f"Failed to push dataset to hub: {e}")
+        new_dataset.push_to_hub(
+            private=hub_private,
+            push_videos=True,
+            tag_version=True,
+        )
+        logger.info(f"Pushed dataset to hub: {new_dataset.repo_id}")
 
     return new_dataset
 
@@ -484,26 +489,23 @@ def main():
             "Choose a different --output_dir or --output_repo_id."
         )
 
-    try:
-        annotate_dataset(
-            input_repo_id=args.input_repo_id,
-            output_dir=output_dir,
-            output_repo_id=output_repo_id,
-            model_name=args.model_name,
-            max_episodes=args.max_episodes,
-            fps=args.fps,
-            reduction=args.reduction,
-            sample_interval=args.sample_interval,
-            reward_stride=args.reward_stride,
-            input_root=args.input_root,
-            push_to_hub=args.push_to_hub,
-            hub_branch=args.hub_branch,
-            hub_private=args.hub_private,
-            dry_run=args.dry_run,
-        )
-    except Exception as e:
-        logger.error(f"Failed to annotate {args.input_repo_id}: {e}")
-        raise
+    annotate_dataset(
+        input_repo_id=args.input_repo_id,
+        input_root=args.input_root,
+        output_dir=output_dir,
+        output_repo_id=output_repo_id,
+        model_name=args.model_name,
+        max_episodes=args.max_episodes,
+        fps=args.fps,
+        reduction=args.reduction,
+        sample_interval=args.sample_interval,
+        reward_stride=args.reward_stride,
+        push_to_hub=args.push_to_hub,
+        revision=args.revision,
+        hub_private=args.hub_private,
+        dry_run=args.dry_run,
+        force_cache_sync=args.force_cache_sync,
+    )
 
 
 if __name__ == "__main__":
