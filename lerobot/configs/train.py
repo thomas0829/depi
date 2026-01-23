@@ -63,6 +63,8 @@ class TrainPipelineConfig(HubMixin):
     eval_freq: int = 20_000
     log_freq: int = 100
     save_checkpoint: bool = True
+    push_to_hub:  bool = False
+    repo_id: str | None = None
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
     use_policy_training_preset: bool = True

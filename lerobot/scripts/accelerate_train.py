@@ -467,6 +467,14 @@ def train(cfg: TrainPipelineConfig):
         close_envs(eval_env)
     logging.info(f"End of training, total steps: {train_tracker.steps}")
 
+    # Push to Hugging Face Hub if configured
+    if accelerator.is_main_process and cfg.push_to_hub and cfg.repo_id:
+        logging.info(f"Pushing model to Hugging Face Hub: {cfg.repo_id}")
+        policy.push_to_hub(
+            repo_id=cfg.repo_id,
+        )
+        logging.info(colored(f"Model pushed to hub: {cfg.repo_id}", "green", attrs=["bold"]))
+
 
 if __name__ == "__main__":
     load_dotenv(override=True)
