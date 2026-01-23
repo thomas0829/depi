@@ -9,9 +9,9 @@ during training without any additional loading mechanism.
 
 Usage:
     python lerobot/scripts/annotate_instruction_rewards.py \
-        --input_repo_id thomas0829/eval_put_the_doll_into_the_box_adv1 \
+        --input_repo_id thomas0829/put_the_doll_into_the_box_correct \
         --output_dir ./datasets_out/ \
-        --output_repo_id sengi/put_the_doll_into_the_box_adv1 \
+        --output_repo_id sengi/put_the_doll_into_the_box_true \
         --model_name Qwen/Qwen3-VL-8B-Instruct \
         --push_to_hub \
         --reward_stride 50 \
@@ -167,38 +167,44 @@ def extract_frames_from_episode(dataset, episode_index: int, sample_interval: in
     video_keys = list(dataset.meta.video_keys)
     if not video_keys:
         raise ValueError("No video keys found in dataset")
-    camera_key = video_keys[0]
+    # camera_key = video_keys[0]
 
-    # Batch-fetch timestamps from parquet
-    if is_v3:
-        dataset._ensure_hf_dataset_loaded()
-    timestamps = [dataset.hf_dataset["timestamp"][idx].item() for idx in sampled_indices]
+    all_views = []
+    video_keys.pop(-1)
+    assert "wrist" not in video_keys[0]
+    for camera_key in video_keys:
+        # Batch-fetch timestamps from parquet
+        if is_v3:
+            dataset._ensure_hf_dataset_loaded()
+        timestamps = [dataset.hf_dataset["timestamp"][idx].item() for idx in sampled_indices]
 
-    # Get video path
-    video_path = dataset.root / dataset.meta.get_video_file_path(episode_index, camera_key)
+        # Get video path
+        video_path = dataset.root / dataset.meta.get_video_file_path(episode_index, camera_key)
 
-    # V3 needs timestamp offset, V2.1 doesn't
-    if is_v3:
-        from_timestamp = ep_data[f"videos/{camera_key}/from_timestamp"]
-        shifted_timestamps = [from_timestamp + ts for ts in timestamps]
-    else:
-        shifted_timestamps = timestamps
+        # V3 needs timestamp offset, V2.1 doesn't
+        if is_v3:
+            from_timestamp = ep_data[f"videos/{camera_key}/from_timestamp"]
+            shifted_timestamps = [from_timestamp + ts for ts in timestamps]
+        else:
+            shifted_timestamps = timestamps
 
-    # BATCH DECODE all frames at once
-    frames_tensor = decode_video_frames(
-        video_path, shifted_timestamps, dataset.tolerance_s, dataset.video_backend
-    )
+        # BATCH DECODE all frames at once
+        frames_tensor = decode_video_frames(
+            video_path, shifted_timestamps, dataset.tolerance_s, dataset.video_backend
+        )
 
-    # Convert to numpy HWC uint8
-    frames = []
-    for frame in frames_tensor:
-        frame_np = frame.numpy()
-        if frame_np.shape[0] in [1, 3]:
-            frame_np = np.transpose(frame_np, (1, 2, 0))
-        if frame_np.max() <= 1.0:
-            frame_np = (frame_np * 255).astype(np.uint8)
-        frames.append(frame_np)
+        # Convert to numpy HWC uint8
+        frames = []
+        for frame in frames_tensor:
+            frame_np = frame.numpy()
+            if frame_np.shape[0] in [1, 3]:
+                frame_np = np.transpose(frame_np, (1, 2, 0))
+            if frame_np.max() <= 1.0:
+                frame_np = (frame_np * 255).astype(np.uint8)
+            frames.append(frame_np)
 
+        all_views.append(frames)
+        
     # Get instruction
     if is_v3:
         task_idx = dataset.hf_dataset["task_index"][start_idx].item()
@@ -213,7 +219,7 @@ def extract_frames_from_episode(dataset, episode_index: int, sample_interval: in
     elif hasattr(dataset, "info"):
         fps = dataset.info.get("fps")
 
-    return frames, instruction, sampled_indices, total_frames, fps
+    return all_views, instruction, sampled_indices, total_frames, fps
 
 
 def compute_advantages_for_episode(
@@ -243,20 +249,19 @@ def compute_advantages_for_episode(
     Returns:
         tuple: (advantages for ALL frames in the episode, VOC score over prefix rewards).
     """
-    if len(frames) < 2:
-        return np.zeros(total_frames, dtype=np.float32), float("nan")
+    num_cam_views = len(frames)
+    total_frames = len(frames[0])
 
     prefix_rewards = []
 
     # Compute reward once per chunk boundary (sampled frame) with optional stride.
-    # Start from t=2 since the reward function expects at least 2 frames.
-    prefix_lengths = list(range(2, len(frames) + 1, max(reward_stride, 1)))
+    prefix_lengths = list(range(1, total_frames, max(reward_stride, 1)))
     if prefix_lengths[-1] != len(frames):
         prefix_lengths.append(len(frames))
 
     for t in tqdm(prefix_lengths, desc="Computing chunk rewards"):
         logger.info(f"Computing reward for prefix length {t}")
-        prefix_frames = frames[:t]
+        prefix_frames = [view[:t] for view in frames]
 
         result = client.compute_instruction_reward(
             frames=prefix_frames,
@@ -279,7 +284,7 @@ def compute_advantages_for_episode(
         sampled_advantages.append(1.0)
     for i in range(1, len(prefix_rewards)):
         for j in range(prefix_lengths[i-1], prefix_lengths[i]):
-            sampled_advantages.append(prefix_rewards[i] - prefix_rewards[i-1])
+            sampled_advantages.append((prefix_rewards[i] - prefix_rewards[i-1]) / np.abs(prefix_rewards[i-1] + 1e-8))
 
     # Now interpolate advantages to all frames in the episode
     # Each sampled frame's advantage applies to itself and the frames until the next sample
@@ -364,6 +369,7 @@ def annotate_dataset(
             frames, instruction, sampled_indices, ep_total_frames, ep_fps = extract_frames_from_episode(
                 dataset, ep_idx, sample_interval
             )
+            # instruction = "pick up the doll and lift it up, then move it to the box and put it inside the box."
             fps_used = ep_fps if ep_fps is not None else fps
             logger.info(f"Episode {ep_idx}: {ep_total_frames} frames, instruction: '{instruction[:50]}...'")
 

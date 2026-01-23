@@ -890,13 +890,9 @@ def advantage_postprocess(item: dict) -> dict:
     if not torch.is_tensor(adv):
         adv = torch.tensor(adv)
 
-    # Clip to [-0.5, 1.0] then rescale positives so max positive becomes 1.
-    adv = torch.clamp(adv, min=-1.0, max=1.0)
-    if (adv > 0).any():
-        max_pos = adv[adv > 0].max()
-        adv = adv.clone()
-        pos_mask = adv > 0
-        adv[pos_mask] = adv[pos_mask] / max_pos
+    # breakpoint()
+    # Clip to [0.0, 1.0] then rescale positives so max positive becomes 1.
+    adv = torch.clamp(adv, min=0.0, max=1.0)
 
     item["advantage"] = adv
     return item

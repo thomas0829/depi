@@ -75,7 +75,6 @@ def update_policy(
 
     loss, output_dict = policy.forward(batch)
     # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    loss = loss.mean()
     train_metrics.forward_s = time.perf_counter() - start_time
 
     # we don't want to backpropagate if the loss is too high later in the training, since that may due to the data quality
@@ -458,7 +457,7 @@ def train(cfg: TrainPipelineConfig):
                 accelerator.wait_for_everyone()
 
             end_time = time.perf_counter()
-            # logging.info(f"Time taken for batch {batch_idx}: {end_time - start_time:.2f} seconds")
+            logging.info(f"Time taken for batch {batch_idx}: {end_time - start_time:.2f} seconds")
 
     avg_loss = total_loss / loss_count if loss_count > 0 else 0.0
     logging.info(colored(f"Training completed. Average Loss: {avg_loss:.4f}", "green", attrs=["bold"]))

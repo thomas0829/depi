@@ -170,7 +170,7 @@ class QwenClient(BaseModelClient):
 
     def compute_instruction_reward(
         self,
-        frames: list[ImageNumpy],
+        frames: list[list[ImageNumpy]],
         instruction: str,
         reduction: str = "mean",
         fps: float = 2.0,
@@ -199,10 +199,7 @@ class QwenClient(BaseModelClient):
             InstructionRewardResult with the computed reward and metadata.
         """
 
-        if len(frames) < 2:
-            raise ValueError("frames must contain at least 2 images")
-
-        pil_frames = [to_pil(cast(ImageT, f)) for f in frames]
+        prefix_pil_frames = [[to_pil(cast(ImageT, f)) for f in view] for view in frames]
 
         # Optionally generate trajectory description for augmented context
         trajectory_description = None
@@ -220,43 +217,24 @@ class QwenClient(BaseModelClient):
             )
         else:
             # Original prompt without description
-            prompt_text = (
-                "The above video shows a robot manipulation trajectory that completes the following task: "
-            )
+            prompt_text = f"The above video shows a robot manipulation trajectory that completes the following task: {instruction} Decide whether the above statement is True or not. The answer is: "
 
-        content = [
-            {"type": "video", "video": pil_frames},
-            {"type": "text", "text": prompt_text},
-        ]
+        content = []
+        for view_frames in prefix_pil_frames:
+            content.append({"type": "video", "video": view_frames})
+        content.append({"type": "text", "text": prompt_text})
         user_messages = [{"role": "user", "content": content}]
         eos_token = self.processor.tokenizer.eos_token
 
         if add_chat_template:
-            instruction_suffix = (
-                f"{instruction} Decide whether the above statement is True or not. The answer is:"
-            )
-            templated_messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "video", "video": pil_frames, "fps": fps},
-                        {"type": "text", "text": f"{prompt_text}{instruction_suffix}"},
-                    ],
-                }
-            ]
             prompt_chat = self.processor.apply_chat_template(
-                templated_messages,
+                user_messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            if eos_token is not None:
-                prompt_chat = prompt_chat.split(eos_token)[0]
-            full_text = f"{prompt_chat} True"
-            image_inputs, video_inputs = process_vision_info(templated_messages)
+            full_text = f"{prompt_chat}True"
+            image_inputs, video_inputs = process_vision_info(user_messages, return_video_metadata=False)
         else:
-            instruction_suffix = (
-                f"{instruction} Decide whether the above statement is True or not. The answer is: True"
-            )
             prompt_chat = self.processor.apply_chat_template(
                 user_messages,
                 tokenize=False,
@@ -264,21 +242,21 @@ class QwenClient(BaseModelClient):
             )
             if eos_token is not None:
                 prompt_chat = prompt_chat.split(eos_token)[0]
-            full_text = f"{prompt_chat}{instruction_suffix}"
-            image_inputs, video_inputs = process_vision_info(user_messages, return_video_metadata=True)
+            full_text = f"{prompt_chat}True"
+            image_inputs, video_inputs = process_vision_info(user_messages, return_video_metadata=False)
 
-        video_input = video_inputs[0][0]
-        video_metadata = video_inputs[0][1]
-        video_metadata["fps"] = fps
-        video_metadata["total_num_frames"] = int(video_metadata["total_num_frames"])
-        video_kwargs = {"video_metadata": video_metadata, "do_sample_frames": True, 'fps': fps} # decrease fps to subsample video.
+        # videos = [v[0] for v in video_inputs]
+        # video_metadata = [v[1] for v in video_inputs]
+        # video_metadata["fps"] = fps
+        # video_metadata["total_num_frames"] = int(video_metadata["total_num_frames"])
+        # video_kwargs = {"video_metadata": video_metadata, "do_sample_frames": True, 'fps': fps} # decrease fps to subsample video.
         inputs = self.processor(
             text=[full_text],
             images=image_inputs,
-            videos=video_input,
+            videos=video_inputs,
             padding=True,
             return_tensors="pt",
-            videos_kwargs=video_kwargs,
+            # videos_kwargs=video_kwargs,
         )
 
         inputs = inputs.to("cuda")

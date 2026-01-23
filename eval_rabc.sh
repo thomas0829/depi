@@ -1,5 +1,5 @@
 accelerate launch --num_processes=1 lerobot/scripts/accelerate_train.py \
-    --policy.path=sengi/depi_adv1 \
+    --policy.path=/weka/oe-training-default/shiruic/depi/outputs/train/2026-01-22/07-50-44_rabc_finetuning/pretrained_model \
     --dataset.repo_id=thomas0829/put_the_doll_into_the_box \
     --batch_size=8 \
     --steps=1000 \
