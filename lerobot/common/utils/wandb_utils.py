@@ -31,9 +31,16 @@ from lerobot.configs.train import TrainPipelineConfig
 
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
+    # Shorten dataset name for wandb tags (max 64 chars per tag)
+    dataset_name = cfg.dataset.repo_id.split('/')[-1]  # Remove org prefix
+    dataset_tag = f"dataset:{dataset_name}"
+    if len(dataset_tag) > 64:
+        # Truncate to fit within 64 char limit
+        dataset_tag = dataset_tag[:64]
+
     lst = [
         f"policy:{cfg.policy.type}",
-        f"dataset:{cfg.dataset.repo_id}",
+        dataset_tag,
         f"seed:{cfg.seed}",
     ]
     if cfg.env is not None:
@@ -85,13 +92,15 @@ class WandBLogger:
             if cfg.resume
             else None
         )
+        tags = cfg_to_group(cfg, return_list=True)
+        tags = [str(tag) for tag in tags if tag is not None]  # Ensure all tags are strings
         wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
             entity=self.cfg.entity,
             name=self.job_name,
             notes=self.cfg.notes,
-            tags=cfg_to_group(cfg, return_list=True),
+            tags=tags,
             dir=self.log_dir,
             config=cfg.to_dict(),
             # TODO(rcadene): try set to True
