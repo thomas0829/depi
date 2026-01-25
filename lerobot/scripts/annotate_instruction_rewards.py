@@ -9,9 +9,9 @@ during training without any additional loading mechanism.
 
 Usage:
     python lerobot/scripts/annotate_instruction_rewards.py \
-        --input_repo_id thomas0829/put_the_doll_into_the_box_correct \
+        --input_repo_id sengi/stack_red_cube_on_green_cube_adv \
         --output_dir ./datasets_out/ \
-        --output_repo_id sengi/put_the_doll_into_the_box_true \
+        --output_repo_id sengi/stack_red_cube_on_green_cube_adv \
         --model_name Qwen/Qwen3-VL-8B-Instruct \
         --push_to_hub \
         --reward_stride 50 \
@@ -269,7 +269,7 @@ def compute_advantages_for_episode(
             reduction=reduction,
             fps=fps,
             use_video_description=False,
-            add_chat_template=False,
+            add_chat_template=True,
         )
         prefix_rewards.append(result.reward)
         logger.info(f"Prefix length {t}: reward = {result.reward:.4f}")
@@ -282,7 +282,7 @@ def compute_advantages_for_episode(
     prefix_rewards = np.array(prefix_rewards)
     prefix_rewards = prefix_rewards - np.min(prefix_rewards)
     prefix_rewards = prefix_rewards / np.max(prefix_rewards)
-    tau = 1.0
+    tau = 2.0
     sampled_advantages = []
     for i in range(1, len(prefix_rewards)):
         for j in range(prefix_lengths[i-1], prefix_lengths[i]):

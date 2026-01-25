@@ -104,14 +104,14 @@ class QwenClient(BaseModelClient):
             Generated text describing the trajectory.
         """
         # Convert frames to PIL images
-        pil_frames = [to_pil(cast(ImageT, f)) for f in frames]
+        pil_frames = frames[0]
 
         content = [
-            {"type": "video", "video": pil_frames, "fps": fps},
             {
                 "type": "text",
-                "text": "Describe the robot manipulation trajectory in this video:",
+                "text": "Describe the robot manipulation trajectory in this video, disregard irrelevant details:",
             },
+            {"type": "video", "video": pil_frames, "fps": fps},
         ]
 
         user_messages = [{"role": "user", "content": content}]
@@ -205,15 +205,15 @@ class QwenClient(BaseModelClient):
         trajectory_description = None
         if use_video_description:
             logger.info("Generating trajectory description...")
-            trajectory_description = self.generate_object_state_reasoning(frames, fps=fps)
+            trajectory_description = self.generate_object_state_reasoning(prefix_pil_frames, fps=fps)
             logger.info("Generated trajectory description.")
-            logger.info("Trajectory description: %s", trajectory_description)
+            logger.info(f"Trajectory description: {trajectory_description}")
             # Prepend trajectory description as object state reasoning
             prompt_text = (
                 f"{trajectory_description} Therefore given the above "
                 f"description and the video, the video shows a robot "
-                f"manipulation trajectory that **completes** the following "
-                f"instruction: "
+                f"manipulation trajectory that completes the following "
+                f"instruction: {instruction}\n Decide whether the above statement is True or not. The answer is: "
             )
         else:
             # Original prompt without description
@@ -280,6 +280,7 @@ class QwenClient(BaseModelClient):
         safe_targets = target_labels.masked_fill(~mask, 0)
         token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
         masked_log_probs = token_log_probs[mask]
+        
 
         # Apply reduction
         reward = masked_log_probs.sum().item() if reduction == "sum" else masked_log_probs.mean().item()
