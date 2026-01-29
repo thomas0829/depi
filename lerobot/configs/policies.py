@@ -59,7 +59,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
-    device: str | None = None  # cuda | cpu | mp
+    device: str | None = "cuda"  # cuda | cpu | mp
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
@@ -196,7 +196,41 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
-        return draccus.parse(cls, config_file, args=cli_overrides)
+        
+        # Filter out unknown fields from the config file to avoid validation errors
+        # when loading models trained with extra parameters
+        import json
+        from dataclasses import fields
+        
+        with open(config_file, 'r') as f:
+            config_dict = json.load(f)
+        
+        # Get the config type (e.g., "pi0", "diffusion")
+        config_type = config_dict.get('type')
+        if not config_type:
+            raise ValueError(f"Config file {config_file} is missing required 'type' field")
+        
+        # Get valid field names for the target config class
+        valid_fields = {f.name for f in fields(cls)}
+        # Always keep 'type' field for draccus choice registry
+        valid_fields.add('type')
+        
+        # Filter config_dict to only include valid fields
+        filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
+        
+        # Write filtered config to a temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+            json.dump(filtered_dict, tmp)
+            tmp_path = tmp.name
+        
+        try:
+            result = draccus.parse(cls, tmp_path, args=cli_overrides)
+        finally:
+            import os
+            os.unlink(tmp_path)
+        
+        return result
 
 
 # Ensure built-in policy configs are registered with the choice registry.

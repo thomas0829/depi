@@ -1209,12 +1209,25 @@ class PI05Policy(PreTrainedPolicy):
                 logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
                 continue
 
-            # Handle vision tower embedding layer potential differences
+            # Log vision tower embedding keys for debugging (usually no action needed)
             if "patch_embedding" in key:
-                # Some checkpoints might have this, but current model expects different structure
-                logging.warning(f"Vision embedding key might need handling: {key}")
+                logging.debug(f"Vision embedding key found: {key}")
 
             fixed_state_dict[new_key] = value
+
+        # Handle tied weights: embed_tokens and lm_head are often shared in PaliGemma
+        # If embed_tokens is missing but lm_head exists, copy lm_head to embed_tokens
+        lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
+        embed_tokens_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+        
+        # Check with or without model. prefix
+        for prefix in ["", "model."]:
+            full_lm_head_key = prefix + lm_head_key
+            full_embed_key = prefix + embed_tokens_key
+            
+            if full_lm_head_key in fixed_state_dict and full_embed_key not in fixed_state_dict:
+                logging.info(f"Copying tied weights: {full_lm_head_key} -> {full_embed_key}")
+                fixed_state_dict[full_embed_key] = fixed_state_dict[full_lm_head_key]
 
         return fixed_state_dict
 

@@ -174,6 +174,7 @@ class ManipulatorRobot:
         self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
+        self.home_position = {}  # Store home position for each follower arm
 
     def get_motor_names(self, arm: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arm.items() for motor in bus.motors]
@@ -275,6 +276,13 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             print(f"Activating torque on {name} follower arm.")
             self.follower_arms[name].write("Torque_Enable", 1)
+
+        # Save home position for each follower arm (used for reset)
+        if self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
+            for name in self.follower_arms:
+                home_pos = self.follower_arms[name].read("Present_Position")
+                self.home_position[name] = torch.from_numpy(home_pos)
+                print(f"Saved home position for {name} follower arm: {self.home_position[name]}")
 
         if self.config.gripper_open_degree is not None:
             if self.robot_type not in ["koch", "koch_bimanual"]:
@@ -452,6 +460,57 @@ class ManipulatorRobot:
                 f"`gripper_open_degree` is set to {self.config.gripper_open_degree}, but None is expected for Aloha instead",
                 stacklevel=1,
             )
+
+    def return_to_home(self, max_steps=600, threshold=3.0, verbose=False):
+        """Gradually move follower arms back to home position.
+        
+        Controls speed by setting intermediate goal positions step by step,
+        rather than jumping directly to home. This doesn't affect motor parameters.
+        
+        Args:
+            max_steps: Maximum number of steps to reach home
+            threshold: Consider reached when position diff < threshold
+            verbose: Print progress messages
+        """
+        if not self.home_position:
+            return
+        
+        for name in self.follower_arms:
+            if name not in self.home_position:
+                continue
+            
+            home_pos = self.home_position[name]
+            
+            # Read starting position
+            present_pos = self.follower_arms[name].read("Present_Position")
+            start_pos = torch.from_numpy(present_pos)
+            
+            total_delta = home_pos - start_pos
+            max_delta = torch.max(torch.abs(total_delta))
+            
+            if max_delta < threshold:
+                continue
+            
+            # Speed control: degrees per step for the largest moving joint
+            # 0.5 = ~15 deg/s, 1.0 = ~30 deg/s at 30Hz
+            speed_per_step = 1.0  # degrees per step
+            
+            # Calculate how many steps needed
+            num_steps = int(max_delta / speed_per_step) + 1
+            num_steps = min(num_steps, max_steps)
+            
+            # Move by setting intermediate goal positions
+            for step in range(num_steps):
+                # Progress from 0 to 1
+                progress = (step + 1) / num_steps
+                
+                # Interpolated goal position
+                goal_pos = start_pos + total_delta * progress
+                
+                # Set intermediate goal
+                self.follower_arms[name].write("Goal_Position", goal_pos.numpy().astype(np.float32))
+                
+                time.sleep(1.0 / 30.0)
 
     def set_so100_robot_preset(self):
         for name in self.follower_arms:
@@ -659,7 +718,14 @@ class ManipulatorRobot:
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
+        # Return to home position before disconnecting
+        if self.robot_type in ["so100", "so101", "moss", "lekiwi"] and self.home_position:
+            self.return_to_home(max_steps=600, threshold=3.0)
+        
+        # Disable torque before disconnecting
+        from lerobot.common.robot_devices.motors.feetech import TorqueMode
         for name in self.follower_arms:
+            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
             self.follower_arms[name].disconnect()
 
         for name in self.leader_arms:

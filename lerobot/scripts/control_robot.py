@@ -310,7 +310,14 @@ def record(
             break
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        cfg.single_task = input("Please input the task you want to record: ")
+        
+        # Only prompt for task if not provided via command line
+        if not cfg.single_task:
+            cfg.single_task = input("Please input the task you want to record: ")
+        
+        # Wait for user to press Enter to start recording
+        input("Press Enter to start episode recording...")
+        
         record_episode(
             robot=robot,
             dataset=dataset,
@@ -339,11 +346,23 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
+        # Check if episode has enough frames (at least 1 second of data)
+        min_frames = cfg.fps  # At least 1 second
+        if dataset.episode_buffer["size"] < min_frames:
+            log_say("Episode too short, please re-record", cfg.play_sounds)
+            dataset.clear_episode_buffer()
+            continue
+
         dataset.save_episode()
         recorded_episodes += 1
 
         if events["stop_recording"]:
             break
+
+    # Sync follower to leader after all episodes are done
+    if policy is not None and recorded_episodes >= cfg.num_episodes:
+        log_say("Syncing follower to leader position", cfg.play_sounds)
+        reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
     stop_recording(robot, listener, cfg.display_data)

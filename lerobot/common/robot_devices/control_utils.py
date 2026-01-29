@@ -311,13 +311,18 @@ def reset_environment(robot, events, reset_time_s, fps):
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    control_loop(
-        robot=robot,
-        control_time_s=reset_time_s,
-        events=events,
-        fps=fps,
-        teleoperate=True,
-    )
+    # For robots with home position, return to home instead of teleoperation
+    if has_method(robot, "return_to_home") and robot.home_position:
+        robot.return_to_home(max_steps=int(reset_time_s * fps), threshold=3.0)
+    else:
+        # Fallback to teleoperation for robots without home position
+        control_loop(
+            robot=robot,
+            control_time_s=reset_time_s,
+            events=events,
+            fps=fps,
+            teleoperate=True,
+        )
 
 
 def stop_recording(robot, listener, display_data):
