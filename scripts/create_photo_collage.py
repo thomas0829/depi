@@ -4,10 +4,9 @@ Create a scattered photo collage effect for papers.
 Photos appear randomly rotated and overlapping like they were dropped on a table.
 """
 
-import os
 import random
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageFilter
 import argparse
 from loguru import logger
 
