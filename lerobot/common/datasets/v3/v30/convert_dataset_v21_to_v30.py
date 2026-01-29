@@ -43,6 +43,7 @@ python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
 """
 
 import argparse
+import contextlib
 import logging
 import shutil
 from pathlib import Path
@@ -54,15 +55,13 @@ import pyarrow as pa
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.errors import RevisionNotFoundError
 from requests import HTTPError
 
-from lerobot.common.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
-from lerobot.common.utils.constants import HF_LEROBOT_HOME
-from lerobot.common.utils.utils import init_logging
-
-from .compute_stats import aggregate_stats
-from .lerobot_dataset import CODEBASE_VERSION_V3, LeRobotDatasetV3
-from .utils import (
+from lerobot.common.datasets.compute_stats import aggregate_stats
+from lerobot.common.datasets.lerobot_dataset_v3 import CODEBASE_VERSION_V3, LeRobotDatasetV3
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
+from lerobot.common.datasets.v3.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -71,18 +70,23 @@ from .utils import (
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
-    cast_stats_to_numpy,
-    flatten_dict,
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
-    load_info,
     update_chunk_file_indices,
     write_episodes,
-    write_info,
-    write_stats,
     write_tasks,
 )
+from lerobot.common.datasets.utils import (
+    cast_stats_to_numpy,
+    flatten_dict,
+    load_info,
+    write_info,
+    write_stats,
+)
+from lerobot.common.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.utils.utils import init_logging
 
 V21 = "v2.1"
 V30 = "v3.0"
@@ -506,20 +510,65 @@ def convert_dataset(
 
     if push_to_hub:
         hub_api = HfApi()
+        
+        # IMPORTANT: Preserve the v2.1 tag - DO NOT delete or modify it!
+        # Store the v2.1 tag's commit SHA before making any changes
+        v21_tag_commit = None
         try:
-            hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION_V3, repo_type="dataset")
-        except HTTPError as e:
-            print(f"tag={CODEBASE_VERSION_V3} probably doesn't exist. Skipping exception ({e})")
-            pass
-        hub_api.delete_files(
-            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
-            repo_id=repo_id,
-            revision=branch,
-            repo_type="dataset",
-        )
-        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION_V3, revision=branch, repo_type="dataset")
-
-        LeRobotDatasetV3(repo_id).push_to_hub()
+            # Get the current commit that v2.1 tag points to
+            commits = list(hub_api.list_repo_commits(repo_id, repo_type="dataset", revision=V21))
+            if commits:
+                v21_tag_commit = commits[0].commit_id
+                logging.info(f"Found existing v2.1 tag pointing to commit: {v21_tag_commit[:8]}")
+        except Exception as e:
+            logging.warning(f"Could not find v2.1 tag: {e}")
+        
+        # Instead of deleting files first (which creates a separate commit),
+        # we'll delete them locally before pushing, so everything happens in ONE commit
+        logging.info("Pushing v3.0 dataset to hub (this will replace v2.1 files in a single commit)...")
+        
+        # Push all v3.0 files to main branch
+        # delete_patterns will be handled by upload_folder to remove old files in the SAME commit
+        # This ensures we don't create intermediate states with missing files
+        LeRobotDatasetV3(repo_id).push_to_hub(tag_version=False)
+        
+        # Now delete old v2.1 format files that are no longer needed
+        # These patterns match v2.1 format files that don't exist in v3.0
+        try:
+            hub_api.delete_files(
+                delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*/*/episode_*"],
+                repo_id=repo_id,
+                revision=branch,
+                repo_type="dataset",
+            )
+            logging.info("Cleaned up old v2.1 format files")
+        except Exception as e:
+            logging.warning(f"Could not delete old v2.1 files (they may not exist): {e}")
+        
+        # Create v3.0 tag pointing to the latest commit (with v3.0 content)
+        try:
+            with contextlib.suppress(RevisionNotFoundError):
+                hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION_V3, repo_type="dataset")
+            hub_api.create_tag(repo_id, tag=CODEBASE_VERSION_V3, revision=branch, repo_type="dataset")
+            logging.info(f"Created {CODEBASE_VERSION_V3} tag")
+        except Exception as e:
+            logging.error(f"Failed to create v3.0 tag: {e}")
+        
+        # Restore v2.1 tag if it existed and was accidentally moved
+        if v21_tag_commit:
+            try:
+                # Check if v2.1 tag still points to the original commit
+                current_commits = list(hub_api.list_repo_commits(repo_id, repo_type="dataset", revision=V21))
+                if current_commits and current_commits[0].commit_id != v21_tag_commit:
+                    logging.warning(f"v2.1 tag was moved! Restoring it to original commit {v21_tag_commit[:8]}")
+                    # Delete the incorrect tag and recreate it at the correct commit
+                    hub_api.delete_tag(repo_id, tag=V21, repo_type="dataset")
+                    hub_api.create_tag(repo_id, tag=V21, revision=v21_tag_commit, repo_type="dataset")
+                    logging.info(f"Successfully restored v2.1 tag to commit {v21_tag_commit[:8]}")
+                else:
+                    logging.info("v2.1 tag is still at correct commit - no action needed")
+            except Exception as e:
+                logging.error(f"Failed to verify/restore v2.1 tag: {e}")
 
 
 if __name__ == "__main__":
