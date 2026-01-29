@@ -531,7 +531,8 @@ def convert_dataset(
         # This ensures we don't create intermediate states with missing files
         LeRobotDatasetV3(repo_id).push_to_hub(tag_version=False)
         
-        # Now delete old v2.1 format files that are no longer needed
+        # Clean up old v2.1 format files from main branch that are no longer needed for v3.0
+        # NOTE: v2.1 content is PRESERVED via the v2.1 tag pointing to the original commit
         # These patterns match v2.1 format files that don't exist in v3.0
         try:
             hub_api.delete_files(
