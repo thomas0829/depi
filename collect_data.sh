@@ -2,7 +2,7 @@
 
 # Default repo_id
 REPO_ID="thomas0829/eval_car_box_depi_v2"
-CACHE_DIR="/home/prior/.cache/huggingface/lerobot/${REPO_ID}"
+CACHE_DIR="${HOME}/.cache/huggingface/lerobot/${REPO_ID}"
 
 # Check if dataset already exists
 if [ -d "$CACHE_DIR" ]; then

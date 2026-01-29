@@ -63,14 +63,19 @@ def main() -> None:
     """Main entry point for downloading ajyanggg datasets."""
     load_dotenv(override=True)
 
+    # Get the project root (parent of scripts/)
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent
+    default_data_dir = project_root / "data"
+
     parser = argparse.ArgumentParser(
         description="Download all datasets from the ajyanggg HuggingFace organization"
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/home/prior/thomas/depi/data"),
-        help="Directory to save datasets (default: /home/prior/thomas/depi/data)",
+        default=default_data_dir,
+        help="Directory to save datasets (default: ./data)",
     )
     parser.add_argument(
         "--token",

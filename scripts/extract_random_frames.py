@@ -128,8 +128,12 @@ def extract_random_frame(
 
 def main() -> None:
     """Main entry point."""
-    data_dir = Path("/home/prior/thomas/depi/data")
-    output_dir = Path("/home/prior/thomas/depi/fig")
+    # Get the project root (parent of scripts/)
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent
+    
+    data_dir = project_root / "data"
+    output_dir = project_root / "fig"
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
