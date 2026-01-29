@@ -60,7 +60,6 @@ from requests import HTTPError
 
 from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.lerobot_dataset_v3 import CODEBASE_VERSION_V3, LeRobotDatasetV3
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.v3.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
