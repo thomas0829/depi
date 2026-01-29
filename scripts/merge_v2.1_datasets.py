@@ -10,14 +10,53 @@ import json
 import shutil
 from pathlib import Path
 import pandas as pd
+import os
+import argparse
 
 # Path settings
-BASE_PATH = Path.home() / ".cache/huggingface/lerobot/thomas0829"
+_HF_LEROBOT_HOME = os.environ.get("HF_LEROBOT_HOME")
+if _HF_LEROBOT_HOME:
+    # Derive base path from HF_LEROBOT_HOME for portability
+    BASE_PATH = Path(_HF_LEROBOT_HOME) / "thomas0829"
+else:
+    # Fallback to original hard-coded default for backward compatibility
+    BASE_PATH = Path.home() / ".cache/huggingface/lerobot/thomas0829"
+
 DS1_PATH = BASE_PATH / "eval_car_box_depi_v1"
 DS2_PATH = BASE_PATH / "eval_car_box_depi_v2"
 OUTPUT_PATH = BASE_PATH / "eval_car_box_depi"
 
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Merge two LeRobot datasets.")
+    parser.add_argument(
+        "--ds1",
+        type=Path,
+        default=DS1_PATH,
+        help="Path to dataset 1 (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--ds2",
+        type=Path,
+        default=DS2_PATH,
+        help="Path to dataset 2 (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUTPUT_PATH,
+        help="Output dataset path (default: %(default)s)",
+    )
+    return parser.parse_args()
+
+
 def main():
+    global DS1_PATH, DS2_PATH, OUTPUT_PATH
+
+    args = parse_args()
+    DS1_PATH = args.ds1
+    DS2_PATH = args.ds2
+    OUTPUT_PATH = args.output
     print("=" * 60)
     print("Merge LeRobot Datasets")
     print("=" * 60)
