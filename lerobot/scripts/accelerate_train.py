@@ -37,6 +37,7 @@ from lerobot.common.envs.utils import close_envs
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.processor.factory import make_pre_post_processors
 from lerobot.common.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.train_utils import (
@@ -225,6 +226,23 @@ def train(cfg: TrainPipelineConfig):
     # when use accelerate, we compile the policy through accelerate config
     policy = make_policy(cfg=cfg.policy, ds_meta=dataset.meta, strict=cfg.strict, rename_map=cfg.rename_map)
     
+    # Create preprocessor and postprocessor based on policy type
+    logging.info("Creating preprocessor and postprocessor")
+    if cfg.policy.type == "pi05":
+        from lerobot.common.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
+        preprocessor, postprocessor = make_pi05_pre_post_processors(
+            config=cfg.policy,
+            dataset_stats=dataset.meta.stats,
+        )
+    else:
+        # Use generic processor factory for other policies
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            dataset_stats=dataset.meta.stats,
+            device=device,
+        )
+    logging.info("Preprocessor and postprocessor created")
+    
     # Enable gradient checkpointing if configured in policy config
     if hasattr(cfg.policy, 'gradient_checkpointing') and cfg.policy.gradient_checkpointing:
         if hasattr(policy, 'enable_gradient_checkpointing'):
@@ -403,7 +421,15 @@ def train(cfg: TrainPipelineConfig):
                 unwrapped_model = accelerator.unwrap_model(policy.model, keep_torch_compile=False)
                 model = policy.model
                 policy.model = unwrapped_model
-                policy.save_pretrained(checkpoint_dir / "pretrained_model")
+                
+                # Save policy and processors to pretrained_model directory
+                pretrained_model_dir = checkpoint_dir / "pretrained_model"
+                pretrained_model_dir.mkdir(parents=True, exist_ok=True)
+                policy.save_pretrained(pretrained_model_dir)
+                preprocessor.save_pretrained(pretrained_model_dir, config_filename="policy_preprocessor.json")
+                postprocessor.save_pretrained(pretrained_model_dir, config_filename="policy_postprocessor.json")
+                logging.info(f"Saved policy with preprocessor and postprocessor to {pretrained_model_dir}")
+                
                 policy.model = model
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
@@ -462,18 +488,60 @@ def train(cfg: TrainPipelineConfig):
     avg_loss = total_loss / loss_count if loss_count > 0 else 0.0
     logging.info(colored(f"Training completed. Average Loss: {avg_loss:.4f}", "green", attrs=["bold"]))
     policy.model = accelerator.unwrap_model(policy.model)
-    policy.save_pretrained(Path(cfg.output_dir) / "pretrained_model")
+    
+    # Save final model with preprocessor and postprocessor (all in same directory)
+    final_model_dir = Path(cfg.output_dir) / "pretrained_model"
+    final_model_dir.mkdir(parents=True, exist_ok=True)
+    policy.save_pretrained(final_model_dir)
+    preprocessor.save_pretrained(final_model_dir, config_filename="policy_preprocessor.json")
+    postprocessor.save_pretrained(final_model_dir, config_filename="policy_postprocessor.json")
+    
+    # Generate and save model card (README.md)
+    dataset_repo_id = cfg.dataset.repo_id if hasattr(cfg.dataset, 'repo_id') else "unknown"
+    model_type = cfg.policy.type if hasattr(cfg.policy, 'type') else "policy"
+    policy.save_model_card(
+        save_directory=final_model_dir,
+        dataset_repo_id=dataset_repo_id,
+        model_type=model_type,
+        license="apache-2.0",
+        tags=["robotics", "lerobot", model_type],
+    )
+    
+    logging.info(f"Saved final model with preprocessor and postprocessor to {final_model_dir}")
+    
+    # Also save train_config.json alongside the model
+    cfg.save_pretrained(final_model_dir)
+    
     if eval_env is not None and accelerator.is_main_process:
         close_envs(eval_env)
     logging.info(f"End of training, total steps: {train_tracker.steps}")
 
     # Push to Hugging Face Hub if configured
-    if accelerator.is_main_process and cfg.push_to_hub and cfg.repo_id:
-        logging.info(f"Pushing model to Hugging Face Hub: {cfg.repo_id}")
-        policy.push_to_hub(
-            repo_id=cfg.repo_id,
+    # Check both train config level and policy config level settings
+    should_push = cfg.push_to_hub and cfg.repo_id
+    if not should_push and hasattr(cfg.policy, 'push_to_hub') and hasattr(cfg.policy, 'repo_id'):
+        should_push = cfg.policy.push_to_hub and cfg.policy.repo_id
+    
+    hub_repo_id = cfg.repo_id if cfg.repo_id else getattr(cfg.policy, 'repo_id', None)
+    
+    if accelerator.is_main_process and should_push and hub_repo_id:
+        from huggingface_hub import HfApi
+        
+        logging.info(f"Pushing model to Hugging Face Hub: {hub_repo_id}")
+        
+        # Create repo if it doesn't exist
+        api = HfApi()
+        api.create_repo(repo_id=hub_repo_id, exist_ok=True)
+        
+        # Upload the entire pretrained_model directory (includes model, processors, README, etc.)
+        api.upload_folder(
+            repo_id=hub_repo_id,
+            folder_path=final_model_dir,
+            repo_type="model",
+            commit_message="Upload policy with preprocessor, postprocessor, and model card",
         )
-        logging.info(colored(f"Model pushed to hub: {cfg.repo_id}", "green", attrs=["bold"]))
+        
+        logging.info(colored(f"Model with processors pushed to hub: {hub_repo_id}", "green", attrs=["bold"]))
 
 
 if __name__ == "__main__":

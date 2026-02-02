@@ -427,26 +427,96 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
             sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
             save_directory = HF_LEROBOT_HOME / "processors" / sanitized_name
 
-        # For direct saves (not through hub), handle config_filename
-        if not push_to_hub and config_filename is not None:
-            # Call _save_pretrained directly with config_filename
-            save_directory = Path(save_directory)
-            save_directory.mkdir(parents=True, exist_ok=True)
-            self._save_pretrained(save_directory, config_filename=config_filename)
-            return None
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
 
-        # Pass config_filename through kwargs for _save_pretrained when using hub
-        if config_filename is not None:
-            push_to_hub_kwargs["config_filename"] = config_filename
+        # Save object (weights, files, etc.) with config_filename
+        self._save_pretrained(save_directory, config_filename=config_filename)
 
-        # Call parent's save_pretrained which will call our _save_pretrained
-        return super().save_pretrained(
-            save_directory=save_directory,
-            repo_id=repo_id,
-            push_to_hub=push_to_hub,
-            card_kwargs=card_kwargs,
-            **push_to_hub_kwargs,
-        )
+        # Push to the Hub if required
+        if push_to_hub:
+            if repo_id is None:
+                repo_id = save_directory.name
+            return self.push_to_hub(
+                repo_id=repo_id,
+                save_directory=save_directory,
+                card_kwargs=card_kwargs,
+                **push_to_hub_kwargs,
+            )
+        return None
+
+    def push_to_hub(
+        self,
+        repo_id: str,
+        *,
+        save_directory: str | Path | None = None,
+        commit_message: str | None = None,
+        private: bool | None = None,
+        token: str | None = None,
+        branch: str | None = None,
+        create_pr: bool | None = None,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
+        delete_patterns: list[str] | str | None = None,
+        card_kwargs: dict[str, Any] | None = None,
+    ) -> str:
+        """Upload pipeline to the Hub.
+
+        Args:
+            repo_id: ID of the repository to push to.
+            save_directory: The directory where the pipeline has already been saved.
+                If None, will save to a temporary directory first.
+            commit_message: Message to commit while pushing.
+            private: Whether the repository should be private.
+            token: The token to use for authentication.
+            branch: The git branch on which to push.
+            create_pr: Whether to create a Pull Request.
+            allow_patterns: If provided, only files matching at least one pattern are pushed.
+            ignore_patterns: If provided, files matching any of the patterns are not pushed.
+            delete_patterns: If provided, remote files matching any of the patterns will be deleted.
+            card_kwargs: Additional arguments passed to the card template.
+
+        Returns:
+            The url of the commit on the Hub.
+        """
+        from tempfile import TemporaryDirectory
+
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=token)
+        repo_id = api.create_repo(repo_id=repo_id, private=private, exist_ok=True).repo_id
+
+        if commit_message is None:
+            commit_message = f"Upload {self.__class__.__name__}"
+
+        # If save_directory is provided, use it directly; otherwise save to temp dir
+        if save_directory is not None:
+            return api.upload_folder(
+                repo_id=repo_id,
+                repo_type="model",
+                folder_path=save_directory,
+                commit_message=commit_message,
+                revision=branch,
+                create_pr=create_pr,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+                delete_patterns=delete_patterns,
+            )
+        else:
+            with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+                saved_path = Path(tmp) / repo_id
+                self.save_pretrained(saved_path, card_kwargs=card_kwargs)
+                return api.upload_folder(
+                    repo_id=repo_id,
+                    repo_type="model",
+                    folder_path=saved_path,
+                    commit_message=commit_message,
+                    revision=branch,
+                    create_pr=create_pr,
+                    allow_patterns=allow_patterns,
+                    ignore_patterns=ignore_patterns,
+                    delete_patterns=delete_patterns,
+                )
 
     @classmethod
     def from_pretrained(

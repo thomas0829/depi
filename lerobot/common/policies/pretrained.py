@@ -34,16 +34,95 @@ from lerobot.configs.policies import PreTrainedConfig
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
-DEFAULT_POLICY_CARD = """
----
-# For reference on model card metadata, see the spec: https://github.com/huggingface/hub-docs/blob/main/modelcard.md?plain=1
-# Doc / guide: https://huggingface.co/docs/hub/model-cards
-{{ card_data }}
+DEFAULT_POLICY_CARD = """---
+datasets: {dataset_repo_id}
+library_name: lerobot
+license: {license}
+model_name: {model_type}
+pipeline_tag: robotics
+tags:
+{tags_yaml}
 ---
 
-This policy has been pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot):
-- Docs: {{ docs_url | default("[More Information Needed]", true) }}
+# Model Card for {model_type}
+
+<!-- Provide a quick summary of what the model is/does. -->
+
+**{model_name}**
+
+{model_description}
+
+This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
+See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot/index).
+
+## Model Details
+
+- **License:** {license}
+
+---
+
+## How to Get Started with the Model
+
+For a complete walkthrough, see the [training guide](https://huggingface.co/docs/lerobot/il_robots#train-a-policy).
+Below is the short version on how to train and run inference/eval:
+
+### Train from scratch
+
+```bash
+lerobot-train \\
+  --dataset.repo_id=${{HF_USER}}/<dataset> \\
+  --policy.type={model_type} \\
+  --output_dir=outputs/train/<desired_policy_repo_id> \\
+  --job_name=lerobot_training \\
+  --policy.device=cuda \\
+  --policy.repo_id=${{HF_USER}}/<desired_policy_repo_id>
+  --wandb.enable=true
+```
+
+_Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
+
+### Evaluate the policy/run inference
+
+```bash
+lerobot-record \\
+  --robot.type=so100_follower \\
+  --dataset.repo_id=<hf_user>/eval_<dataset> \\
+  --policy.path=<hf_user>/<desired_policy_repo_id> \\
+  --episodes=10
+```
+
+Prefix the dataset repo with **eval\\_** and supply `--policy.path` pointing to a local or hub checkpoint.
+
+---
 """
+
+PI05_MODEL_DESCRIPTION = """π₀.₅ (Pi05) Policy
+
+π₀.₅ is a Vision-Language-Action model with open-world generalization, from Physical Intelligence. The LeRobot implementation is adapted from their open source OpenPI repository.
+
+**Model Overview**
+
+π₀.₅ represents a significant evolution from π₀, developed by Physical Intelligence to address a big challenge in robotics: open-world generalization. While robots can perform impressive tasks in controlled environments, π₀.₅ is designed to generalize to entirely new environments and situations that were never seen during training.
+
+For more details, see the [Physical Intelligence π₀.₅ blog post](https://www.physicalintelligence.company/blog/pi05)."""
+
+MODEL_DESCRIPTIONS = {
+    "pi05": PI05_MODEL_DESCRIPTION,
+    "pi0": "π₀ (Pi0) is a Vision-Language-Action model from Physical Intelligence.",
+    "act": "ACT (Action Chunking with Transformers) is a policy for robot manipulation.",
+    "diffusion": "Diffusion Policy uses diffusion models for robot action prediction.",
+    "tdmpc": "TD-MPC is a model-based reinforcement learning algorithm for continuous control.",
+    "vqbet": "VQ-BeT uses vector quantization for behavior transformers.",
+}
+
+MODEL_NAMES = {
+    "pi05": "π₀.₅ (Pi05) Policy",
+    "pi0": "π₀ (Pi0) Policy", 
+    "act": "ACT Policy",
+    "diffusion": "Diffusion Policy",
+    "tdmpc": "TD-MPC Policy",
+    "vqbet": "VQ-BeT Policy",
+}
 
 
 def load_model(
@@ -295,15 +374,85 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         return model
 
-    # def generate_model_card(self, *args, **kwargs) -> ModelCard:
-    #     card = ModelCard.from_template(
-    #         card_data=self._hub_mixin_info.model_card_data,
-    #         template_str=self._hub_mixin_info.model_card_template,
-    #         repo_url=self._hub_mixin_info.repo_url,
-    #         docs_url=self._hub_mixin_info.docs_url,
-    #         **kwargs,
-    #     )
-    #     return card
+    def generate_model_card(
+        self,
+        dataset_repo_id: str = "unknown",
+        model_type: str | None = None,
+        license: str = "apache-2.0",
+        tags: list[str] | None = None,
+    ) -> str:
+        """Generate a model card (README.md content) for this policy.
+        
+        Args:
+            dataset_repo_id: The repository ID of the dataset used for training.
+            model_type: The type of the model (e.g., "pi05", "act"). If None, uses self.name.
+            license: The license for the model.
+            tags: List of tags for the model.
+            
+        Returns:
+            The model card content as a string.
+        """
+        if model_type is None:
+            model_type = getattr(self, "name", "policy")
+        
+        if tags is None:
+            tags = ["robotics", "lerobot", model_type]
+        else:
+            # Ensure required tags are present
+            tags = list(set(tags) | {"robotics", "lerobot", model_type})
+        
+        # Format tags for YAML
+        tags_yaml = "\n".join(f"- {tag}" for tag in sorted(tags))
+        
+        # Get model name and description
+        model_name = MODEL_NAMES.get(model_type, f"{model_type.upper()} Policy")
+        model_description = MODEL_DESCRIPTIONS.get(
+            model_type, 
+            f"This is a {model_type} policy for robot control."
+        )
+        
+        return DEFAULT_POLICY_CARD.format(
+            dataset_repo_id=dataset_repo_id,
+            license=license,
+            model_type=model_type,
+            tags_yaml=tags_yaml,
+            model_name=model_name,
+            model_description=model_description,
+        )
+
+    def save_model_card(
+        self,
+        save_directory: str | Path,
+        dataset_repo_id: str = "unknown",
+        model_type: str | None = None,
+        license: str = "apache-2.0",
+        tags: list[str] | None = None,
+    ) -> Path:
+        """Generate and save a model card (README.md) to the specified directory.
+        
+        Args:
+            save_directory: The directory to save the model card to.
+            dataset_repo_id: The repository ID of the dataset used for training.
+            model_type: The type of the model.
+            license: The license for the model.
+            tags: List of tags for the model.
+            
+        Returns:
+            The path to the saved model card.
+        """
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
+        
+        card_content = self.generate_model_card(
+            dataset_repo_id=dataset_repo_id,
+            model_type=model_type,
+            license=license,
+            tags=tags,
+        )
+        
+        readme_path = save_directory / "README.md"
+        readme_path.write_text(card_content)
+        return readme_path
 
     @abc.abstractmethod
     def get_optim_params(self) -> dict:
